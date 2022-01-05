@@ -8,8 +8,7 @@
 #define M 5          // max number of threads that can run at a time
 #define MAXLEN 120   // max length of any file server command
 
-/*
- * Struct: Job
+/* Struct: Job
  * -----------
  *  used by worker thread to keep track of writers and readers.
  *  also used to decide whether job is allowed to terminate.
@@ -23,8 +22,7 @@ typedef struct TJob {
   pthread_mutex_t global_lock; // lock for reading/writing
 } tjob;
 
-/*
- * Struct: Jobdata
+/* Struct: Jobdata
  * ---------------
  *  holds data that is passed to thread to be used in a job.
  */
@@ -43,14 +41,20 @@ char files[N][MAXLEN];          // keeps track of currently active jobs
 tjob *jobs[N] = {0};            // contains data of jobs
 pthread_t tid[M];               // worker threads
 int threads[M] = {0};           // keeps track of currently working threads
+FILE *cmdfile;                  // log file for commands
+FILE *readfile;                 // log file for reads
+FILE *emptyfile;                // log file for empty
 pthread_mutex_t tlock[N];       // lock for accessing jobs
 pthread_mutex_t qlock;          // lock for accessing working threads
+pthread_mutex_t rlock;          // lock for read.txt
+pthread_mutex_t elock;          // lock for empty.txt
+
+
 
 char cmds[][MAXLEN] = { "read", "write", "empty", };
 char space[2] = " ";
 
-/*
- * Function: getcmd
+/* Function: getcmd
  * ----------------
  *  used to obtain input from the user.
  *
@@ -68,10 +72,15 @@ int getcmd( char *buf, int nbuf ) {
   return 1;
 }
 
-/*
- * Function: init
+/* Function: init
  * --------------
- *  initializes mutexes for the job array.
+ *  initializes the following:
+ *   - tlock: mutexes for the job array
+ *   - qlock: mutex for the thread pool
+ *   - rlock: mutex for read.txt
+ *   - elock: mutex for empty.txt
+ *   - files: each entry is set to whitespace
+ *   - log files commands.txt, read.txt, and empty.txt
  */
 void init() {
   for( int i = 0; i < N; i++ ) {
@@ -80,7 +89,9 @@ void init() {
     }
   }
  
-  if( pthread_mutex_init( &qlock, NULL ) != 0 ) {
+  if( pthread_mutex_init( &qlock, NULL ) != 0  ||
+      pthread_mutex_init( &rlock, NULL ) != 0  ||
+      pthread_mutex_init( &elock, NULL ) != 0 ) {
     printf( "mutex init has failed\n" );
   }
 
@@ -91,12 +102,10 @@ void init() {
   printf( "Initialization complete\n" );
 }
 
-/*
- * Function: strindex
+/* Function: strindex
  * -----------------
  *  locates where a string is stored in an array.
  *
-char space[2] = " ";
  * str: string to find
  * arr: array to search
  * narr: size of array
@@ -112,8 +121,7 @@ int strindex( char *str, char arr[][MAXLEN], int narr ) {
   return -1;
 }
 
-/*
- * Function: register_job
+/* Function: register_job
  * ----------------------
  *  saves the filepath of a file that will be read from or written to on the
  *  files array by looking for the first "open" spot.
@@ -136,7 +144,7 @@ int register_job( char *filepath ) {
  * ------------------
  *  checks whether an existing job exists in the job array at the supplied
  *  index. if yes, then the job count is increased. otherwise, the job count is
- *  set to zero and the tjob struct is initialized.
+ *  set to one and the tjob struct is initialized.
  *
  * idx: index of filepath in the files array that job will use
  * filepath: filepath that is redundantly set to the files array to avoid
@@ -150,15 +158,16 @@ int init_job( int idx, char *filepath ) {
   strcpy( files[idx], filepath );
   tjob* job = jobs[idx];
 
-  if ( job != NULL ) {
+  // update job
+  if( job != NULL ) {
     job->count++;
   }
+  // create job
   else {
     job = malloc( sizeof( tjob ) );
 
     if ( pthread_mutex_init( &( job->wlock ), NULL ) != 0 ||
-         pthread_mutex_init( &( job->global_lock ), NULL ) != 0 
-       ) {
+         pthread_mutex_init( &( job->global_lock ), NULL ) != 0 ) {
       printf( "mutex init has failed\n" );
     }
 
@@ -294,6 +303,7 @@ void pjob( int idx ) {
 void finish_job( jobdata *data ) {
   int i = data->fileidx;
 
+  // finish job
   pthread_mutex_lock( &tlock[i] );
   tjob *job = jobs[i];
   if ( job->workers == 0 ) {
@@ -307,6 +317,7 @@ void finish_job( jobdata *data ) {
   }
   pthread_mutex_unlock( &tlock[i] );
 
+  // retire worker
   pthread_mutex_lock( &qlock );
   threads[data->worker_ID] = 0;
   free( data );
@@ -329,7 +340,7 @@ void enqueue_worker( tjob *job ) {
  * ------------------------
  *  removes worker from job's total worker count
  *
- *  job: job which worker is part of
+ * job: job which worker is part of
  */
 void dequeue_worker( tjob *job ) {
   pthread_mutex_lock( &( job->wlock ) );
@@ -337,20 +348,25 @@ void dequeue_worker( tjob *job ) {
   pthread_mutex_unlock( &( job->wlock ) );
 }
 
-void xappend( char *filepath ) {
+void xwrite( char *filepath ) {
 }
 
+/* Function: xsleep
+ * ----------------
+ *  puts thread to sleep for 1 second (80% chance) or 6 seconds (20% chance).
+ */
 void xsleep() {
   srand(time(0));
 	int r = rand()%100;
-  if ( r < 80 ) {
-    sleep(6);
-  }
-  else {
-    sleep(6);
-  }
+  ( r < 80 ) ? sleep(6) : sleep(6);
 }
 
+/* Function: xread
+ * ---------------
+ *  reads a file (if it exists) and saves its content to read.txt
+ *
+ *  data: data that is used by the worker
+ */
 void xread( jobdata *data ) {
   FILE *file;
   tjob *job = jobs[data->fileidx];
@@ -369,6 +385,14 @@ void xread( jobdata *data ) {
   }
 }
 
+/* Function: dispatch_worker
+ * -------------------------
+ *  adds worker to job queue, puts it to sleep, then makes it wait for its turn
+ *  to work on the job. after the worker completes its assigned operation,it is
+ *  removed from job queue and cleanup is done.
+ *
+ * arg: data for worker cast to ( void * )
+ */
 void *dispatch_worker( void *arg ) {
   jobdata *data = (jobdata *) arg;
   tjob *job = jobs[data->fileidx];
@@ -378,11 +402,12 @@ void *dispatch_worker( void *arg ) {
   xsleep();
 
   pthread_mutex_lock( &( job->global_lock ) );
-  while (job->curr_job != data->job_ID) {
+  
+  while ( job->curr_job != data->job_ID ) {
     pthread_cond_wait( &( job->done ), &( job->global_lock ) );
   }
 
-  // executing command
+  // execute command
   switch( data->cmdidx ) {
     case 0:
       xread( data );
@@ -418,19 +443,24 @@ int main() {
   while( getcmd( buf, sizeof( buf ) ) == 0 ) {
 
     buf[strlen( buf ) - 1] = ' ';  // turn '\n' to space
-    strcpy( string, " " );         // initializing string
+    strcpy( string, " " );         // initialize string
 
-    // validating command
     strcpy( command, strtok_r( buf, space, &token ));
 
+    // check if user wants to quit
+    if ( strcmp( command, "quit" ) == 0 ) {
+      break;
+    }
+
+    // validating command
     if(( cmdidx = strindex( command, cmds, 3 )) == -1 ) {
       printf( "Invalid command\n" );
       continue;
     }
 
-    // checking job existence
     strcpy( filepath, strtok_r( NULL, space, &token ));
 
+    // check job existence
     if(( fileidx = strindex( filepath, files, N )) == -1 ) {
       if(( fileidx = register_job( filepath )) == -1 ) {
         printf( "Too many jobs at once.\n" );
@@ -438,29 +468,29 @@ int main() {
       }
     }
 
-    // saving string if operation is write
+    // save string if operation is write
     if( cmdidx == 2 ) {
       strcpy( string, strtok_r( NULL, space, &token ));
     }
     
-    // finding an available thread in thread pool
+    // find an available thread in thread pool
     if(( worker_ID = register_worker()) == -1 ) {
-      printf( "No available threads.\n" );
+      printf( "No more available threads.\n" );
       return( -1 );
     }
 
-    // readying jobs and worker data
+    // ready jobs and worker data
     job_ID = init_job( fileidx, filepath );
     jobdata *data = init_worker( cmdidx, fileidx, job_ID, worker_ID, string );
 
-    // printing job and worker status
+    // print job and worker status for testing
     if ( testing_mode ) {
       pft();
       pjob( fileidx );
       pwork( data );
     }
 
-    // dispatching worker
+    // dispatch worker
     pthread_create( &tid[worker_ID], NULL, dispatch_worker, ( void * )data );
   }
 }
