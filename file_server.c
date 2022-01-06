@@ -116,6 +116,16 @@ void pjob( int idx ) {
       job->curr_job );
 }
 
+/* Function: test_print
+ * --------------------
+ *  calls test functions.
+ */
+void test_print() {
+      pft();
+      pjob( fileidx );
+      pwork( data );
+}
+
 /* Function: init
  * --------------
  *  initializes the following:
@@ -146,14 +156,11 @@ void init() {
   cmdfile = fopen( "commands.txt", "w" );
   readfile = fopen( "read.txt", "w" );
   emptyfile = fopen( "empty.txt", "w" );
+  fclose(cmdfile);
+  fclose( readfile );
+  fclose( emptyfile );
 
   printf( "Initialization complete\n" );
-}
-
-void clean() {
-  fclose(cmdfile);
-  fclose(readfile);
-  fclose(emptyfile);
 }
 
 /* Function: getcmd
@@ -212,7 +219,6 @@ int register_job( char *filepath ) {
   // no available slots
   printf( "Too many jobs at once. Program will exit after all operations "
       "are finished.\n" );
-  clean();
   pthread_exit(NULL);
 }
 
@@ -282,7 +288,6 @@ int register_worker() {
   // no available threads
   printf( "No more available threads. Program will exit after all "
       "operations are finished.\n" );
-  clean();
   pthread_exit(NULL);
 }
 
@@ -505,17 +510,12 @@ int main() {
     jobdata *data = init_worker( cmdidx, fileidx, job_ID, worker_ID, string );
 
     // print job and worker status for testing
-    if ( test_mode ) {
-      pft();
-      pjob( fileidx );
-      pwork( data );
-    }
+    if ( test_mode ) { test_print(); }
 
     // dispatch worker
     pthread_create( &tid[worker_ID], NULL, dispatch_worker, ( void * )data );
     pthread_detach( tid[worker_ID] );
   }
 
-  clean();
   pthread_exit(NULL);
 }
