@@ -5,8 +5,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
-#define N 5          // max number of files that can be used at a time
-#define M 5          // max number of threads that can run at a time
+#define N 10          // max number of files that can be used at a time
+#define M 20          // max number of threads that can run at a time
 #define MAXLEN 120   // max length of any file server command
 
 /* Struct: Job
@@ -150,6 +150,12 @@ void init() {
   printf( "Initialization complete\n" );
 }
 
+void clean() {
+  fclose(cmdfile);
+  fclose(readfile);
+  fclose(emptyfile);
+}
+
 /* Function: getcmd
  * ----------------
  *  used to obtain input from the user.
@@ -203,7 +209,11 @@ int register_job( char *filepath ) {
       return i;
     } 
   }
-  return -1;
+  // no available slots
+  printf( "Too many jobs at once. Program will exit after all operations "
+      "are finished.\n" );
+  clean();
+  pthread_exit(NULL);
 }
 
 /* Function: init_job
@@ -254,9 +264,10 @@ int init_job( int idx, char *filepath ) {
 /*
  * Function: register_worker
  * -------------------------
- *  saves the index of a worker thread that is dispatched.
+ *  saves the index of a worker thread that is dispatched. if there are no
+ *  threads available, cleanup is done and program execution is terminated.
  *
- * returns: index of thread in array if save is successful, -1 otherwise
+ * returns: index of thread in array if save is successful
  */
 int register_worker() {
   pthread_mutex_lock( &qlock );
@@ -268,7 +279,11 @@ int register_worker() {
     } 
   }
   pthread_mutex_unlock( &qlock );
-  return -1;
+  // no available threads
+  printf( "No more available threads. Program will exit after all "
+      "operations are finished.\n" );
+  clean();
+  pthread_exit(NULL);
 }
 
 /*
@@ -356,7 +371,6 @@ void dequeue_worker( tjob *job ) {
  *  puts thread to sleep for 1 second (80% chance) or 6 seconds (20% chance).
  */
 void xsleep() {
-  return;
   srand(time(0));
 	int r = rand()%100;
   ( r < 80 ) ? sleep(6) : sleep(6);
@@ -383,6 +397,7 @@ void xread( jobdata *data ) {
       printf( "%c", ch );
     }
       printf( "\n" );
+    fclose( file );
   }
 }
 
@@ -391,18 +406,11 @@ void xwrite( jobdata *data ) {
   tjob *job = jobs[data->fileidx];
   char *string = data->string;
 
-  //file = fopen( files[data->fileidx], "a" );
   usleep( ( unsigned int )( 1000 * 25 * strlen( string )));
-  printf( "strlen: %ld\n", strlen( string ));
-  printf( "slept for %d milliseconds\n", ( int ) (strlen( string ) * 25 ));
-  /*
-  char ch;
-  printf( "read %s: ", files[data->fileidx] );
-  while (( ch = fgetc(file) ) != EOF ) {
-    printf( "%c", ch );
-  }
-  printf( "\n" );
-  */
+
+  file = fopen( files[data->fileidx], "a" );
+  fputs(string, file);
+  fclose( file );
 }
 
 void xempty( jobdata *data ) {
@@ -412,7 +420,7 @@ void xempty( jobdata *data ) {
 /* Function: dispatch_worker
  * -------------------------
  *  adds worker to job queue, puts it to sleep, then makes it wait for its turn
- *  to work on the job. after the worker completes its assigned operation,it is
+ *  to work on the job. after the worker completes its assigned operation, it is
  *  removed from job queue and cleanup is done.
  *
  * arg: data for worker cast to ( void * )
@@ -454,13 +462,12 @@ void *dispatch_worker( void *arg ) {
 int main() {
   char buf[MAXLEN]; // buffer where user input is stored
   char command[10], filepath[51], string[51];
-  char *token;
-  int cmdidx;
-  int fileidx;
-  int job_ID;
-  int worker_ID;
-
-  int testing_mode = 1;
+  char *context;    // used by strtok to save state
+  int cmdidx;       // index of command in cmds array
+  int fileidx;      // index of file in files/jobs array
+  int job_ID;       // position of worker in job queue
+  int worker_ID;    // position of worker in thread pool
+  int test_mode = 1;
 
   init();
 
@@ -469,46 +476,36 @@ int main() {
     buf[strlen( buf ) - 1] = ' ';  // turn '\n' to space
     strcpy( string, " " );         // reset string
 
-    strcpy( command, strtok_r( buf, space, &token ));
+    strcpy( command, strtok_r( buf, space, &context ));
 
     // check if user wants to quit
-    if ( strcmp( command, "quit" ) == 0 ) {
-      break;
-    }
+    if ( strcmp( command, "quit" ) == 0 ) { break; }
 
     // validating command
     if(( cmdidx = strindex( command, cmds, 3 )) == -1 ) {
-      printf( "Invalid command\n" );
-      continue;
+      printf( "Invalid command.\n" ); continue;
     }
 
-    strcpy( filepath, strtok_r( NULL, space, &token ));
-
-    // check job existence
-    if(( fileidx = strindex( filepath, files, N )) == -1 ) {
-      if(( fileidx = register_job( filepath )) == -1 ) {
-        printf( "Too many jobs at once.\n" );
-        return( -1 );
-      }
-    }
-
-    // save string if operation is write
+    // save filepath and/or string
+    strcpy( filepath, strtok_r( NULL, space, &context ));
     if( cmdidx == 1 ) {
-      strcpy( string, strtok_r( NULL, space, &token ));
+      strcpy( string, strtok_r( NULL, space, &context ));
+    }
+
+    // check if job already exists, else save it
+    if(( fileidx = strindex( filepath, files, N )) == -1 ) {
+      fileidx = register_job( filepath );
     }
     
     // find an available thread in thread pool
-    if(( worker_ID = register_worker()) == -1 ) {
-      printf( "No more available threads.\n" );
-      return( -1 );
-    }
+    worker_ID = register_worker();
 
     // ready jobs and worker data
     job_ID = init_job( fileidx, filepath );
     jobdata *data = init_worker( cmdidx, fileidx, job_ID, worker_ID, string );
 
     // print job and worker status for testing
-    if ( testing_mode ) {
+    if ( test_mode ) {
       pft();
       pjob( fileidx );
       pwork( data );
@@ -516,5 +513,9 @@ int main() {
 
     // dispatch worker
     pthread_create( &tid[worker_ID], NULL, dispatch_worker, ( void * )data );
+    pthread_detach( tid[worker_ID] );
   }
+
+  clean();
+  pthread_exit(NULL);
 }
