@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -49,27 +50,70 @@ pthread_mutex_t qlock;          // lock for accessing working threads
 pthread_mutex_t rlock;          // lock for read.txt
 pthread_mutex_t elock;          // lock for empty.txt
 
-
-
 char cmds[][MAXLEN] = { "read", "write", "empty", };
 char space[2] = " ";
 
-/* Function: getcmd
+/* Function: pfiles
  * ----------------
- *  used to obtain input from the user.
- *
- * buf: buffer where command is stored
- * nbuf: size of buffer
- *
- * returns: 0 when command is successfully accepted
+ *  test function to print all currently active jobs.
  */
-int getcmd( char *buf, int nbuf ) {
-  printf( "> " );
-  memset( buf, 0, nbuf );
-  if ( fgets( buf, nbuf, stdin ) != NULL ) {
-    return 0;
+void pfiles() {
+  for ( int i = 0; i < N; i++ ) {
+    printf( "files[%d]: %s\n", i, files[i] );
   }
-  return 1;
+}
+
+/* Function: pft
+ * -------------
+ *  test function to print all currently active workers.
+ */
+void pft() {
+  printf( "active threads: " );
+  for( int i = 0; i < M; i++ ) {
+    if( threads[i] == 1 ) {
+      printf( "%d, ", i );
+    }
+  }
+  printf( "\n" );
+}
+
+/* Function: pwork
+ * -------------
+ *  test function to print an individual worker's data
+ *
+ *  data: data that is used by the worker
+ */
+void pwork( jobdata *data ) {
+  printf( "thread working on fileidx = %d with:\n"
+      "\tcommand = %s\n"
+      "\tjob_ID = %d\n"
+      "\tworker_ID = %d\n"
+      "\tstring = %s\n"
+      ,
+      data->fileidx,
+      cmds[data->cmdidx],
+      data->job_ID,
+      data->worker_ID,
+      data->string );
+}
+
+/* Function: pjob
+ * --------------
+ *  test function to print the details of a specific job.
+ *
+ * idx: index of job in jobs array
+ */
+void pjob( int idx ) {
+  tjob *job = jobs[idx];
+  printf( "file <<%s>> currently has:\n"
+      "\tworkers = %d\n"
+      "\tcount = %d\n"
+      "\tcurr_job = %d\n"
+      ,
+      files[idx],
+      job->workers,
+      job->count,
+      job->curr_job );
 }
 
 /* Function: init
@@ -80,7 +124,7 @@ int getcmd( char *buf, int nbuf ) {
  *   - rlock: mutex for read.txt
  *   - elock: mutex for empty.txt
  *   - files: each entry is set to whitespace
- *   - log files commands.txt, read.txt, and empty.txt
+ *   - log files command.txt, read.txt, empty.txt
  */
 void init() {
   for( int i = 0; i < N; i++ ) {
@@ -99,7 +143,29 @@ void init() {
     strcpy( files[i], " " );
   }
 
+  cmdfile = fopen( "commands.txt", "w" );
+  readfile = fopen( "read.txt", "w" );
+  emptyfile = fopen( "empty.txt", "w" );
+
   printf( "Initialization complete\n" );
+}
+
+/* Function: getcmd
+ * ----------------
+ *  used to obtain input from the user.
+ *
+ * buf: buffer where command is stored
+ * nbuf: size of buffer
+ *
+ * returns: 0 when command is successfully accepted
+ */
+int getcmd( char *buf, int nbuf ) {
+  printf( "> " );
+  memset( buf, 0, nbuf );
+  if ( fgets( buf, nbuf, stdin ) != NULL ) {
+    return 0;
+  }
+  return 1;
 }
 
 /* Function: strindex
@@ -228,69 +294,6 @@ jobdata *init_worker( int cmdidx, int fileidx, int job_ID, int worker_ID, char *
   return data;
 }
 
-/* Function: pfiles
- * ----------------
- *  test function to print all currently active jobs.
- */
-void pfiles() {
-  for ( int i = 0; i < N; i++ ) {
-    printf( "files[%d]: %s\n", i, files[i] );
-  }
-}
-
-/* Function: pft
- * -------------
- *  test function to print all currently active workers.
- */
-void pft() {
-  printf( "active threads: " );
-  for( int i = 0; i < M; i++ ) {
-    if( threads[i] == 1 ) {
-      printf( "%d, ", i );
-    }
-  }
-  printf( "\n" );
-}
-
-/* Function: pwork
- * -------------
- *  test function to print an individual worker's data
- *
- *  data: data that is used by the worker
- */
-void pwork( jobdata *data ) {
-  printf( "thread working on fileidx = %d with:\n"
-      "\tcommand = %s\n"
-      "\tjob_ID = %d\n"
-      "\tworker_ID = %d\n"
-      "\tstring = %s\n"
-      ,
-      data->fileidx,
-      cmds[data->cmdidx],
-      data->job_ID,
-      data->worker_ID,
-      data->string );
-}
-
-/* Function: pjob
- * --------------
- *  test function to print the details of a specific job.
- *
- * idx: index of job in jobs array
- */
-void pjob( int idx ) {
-  tjob *job = jobs[idx];
-  printf( "file <<%s>> currently has:\n"
-      "\tworkers = %d\n"
-      "\tcount = %d\n"
-      "\tcurr_job = %d\n"
-      ,
-      files[idx],
-      job->workers,
-      job->count,
-      job->curr_job );
-}
-
 /* Function: finish_job
  * --------------------
  *  called by the worker after an operation. if there are other jobs in the
@@ -348,14 +351,12 @@ void dequeue_worker( tjob *job ) {
   pthread_mutex_unlock( &( job->wlock ) );
 }
 
-void xwrite( char *filepath ) {
-}
-
 /* Function: xsleep
  * ----------------
  *  puts thread to sleep for 1 second (80% chance) or 6 seconds (20% chance).
  */
 void xsleep() {
+  return;
   srand(time(0));
 	int r = rand()%100;
   ( r < 80 ) ? sleep(6) : sleep(6);
@@ -383,6 +384,29 @@ void xread( jobdata *data ) {
     }
       printf( "\n" );
   }
+}
+
+void xwrite( jobdata *data ) {
+  FILE *file;
+  tjob *job = jobs[data->fileidx];
+  char *string = data->string;
+
+  //file = fopen( files[data->fileidx], "a" );
+  usleep( ( unsigned int )( 1000 * 25 * strlen( string )));
+  printf( "strlen: %ld\n", strlen( string ));
+  printf( "slept for %d milliseconds\n", ( int ) (strlen( string ) * 25 ));
+  /*
+  char ch;
+  printf( "read %s: ", files[data->fileidx] );
+  while (( ch = fgetc(file) ) != EOF ) {
+    printf( "%c", ch );
+  }
+  printf( "\n" );
+  */
+}
+
+void xempty( jobdata *data ) {
+  printf( "emptying\n" );
 }
 
 /* Function: dispatch_worker
@@ -413,10 +437,10 @@ void *dispatch_worker( void *arg ) {
       xread( data );
       break;
     case 1:
-      //printf( "one\n" );
+      xwrite( data );
       break;
     case 2:
-      //printf( "two\n" );
+      xempty( data );
       break;
   }
 
@@ -429,7 +453,7 @@ void *dispatch_worker( void *arg ) {
 
 int main() {
   char buf[MAXLEN]; // buffer where user input is stored
-  char command[10], filepath[50], string[50];
+  char command[10], filepath[51], string[51];
   char *token;
   int cmdidx;
   int fileidx;
@@ -443,7 +467,7 @@ int main() {
   while( getcmd( buf, sizeof( buf ) ) == 0 ) {
 
     buf[strlen( buf ) - 1] = ' ';  // turn '\n' to space
-    strcpy( string, " " );         // initialize string
+    strcpy( string, " " );         // reset string
 
     strcpy( command, strtok_r( buf, space, &token ));
 
@@ -469,7 +493,7 @@ int main() {
     }
 
     // save string if operation is write
-    if( cmdidx == 2 ) {
+    if( cmdidx == 1 ) {
       strcpy( string, strtok_r( NULL, space, &token ));
     }
     
