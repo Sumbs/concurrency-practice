@@ -5,8 +5,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
-#define N 10          // max number of files that can be used at a time
-#define M 20          // max number of threads that can run at a time
+#define N 500          // max number of files that can be used at a time
+#define M 1000         // max number of threads that can run at a time
 #define MAXLEN 120   // max length of any file server command
 
 /* Struct: Job
@@ -35,13 +35,12 @@ typedef struct Jobdata {
   char string[50];
 } jobdata;
 
-/*
- * Global Variables
+/* Global Variables
  */
 char files[N][MAXLEN];          // keeps track of currently active jobs
-tjob *jobs[N] = {0};            // contains data of jobs
+tjob *jobs[N] = { 0 };            // contains data of jobs
 pthread_t tid[M];               // worker threads
-int threads[M] = {0};           // keeps track of currently working threads
+int threads[M] = { 0 };           // keeps track of currently working threads
 FILE *cmdfile;                  // log file for commands
 FILE *readfile;                 // log file for reads
 FILE *emptyfile;                // log file for empty
@@ -52,6 +51,8 @@ pthread_mutex_t elock;          // lock for empty.txt
 
 char cmds[][MAXLEN] = { "read", "write", "empty", };
 char space[2] = " ";
+int test_mode;
+
 
 /* Function: pfiles
  * ----------------
@@ -120,7 +121,7 @@ void pjob( int idx ) {
  * --------------------
  *  calls test functions.
  */
-void test_print() {
+void test_print( int fileidx, jobdata *data ) {
       pft();
       pjob( fileidx );
       pwork( data );
@@ -129,14 +130,23 @@ void test_print() {
 /* Function: init
  * --------------
  *  initializes the following:
+ *   - test_mode
  *   - tlock: mutexes for the job array
  *   - qlock: mutex for the thread pool
  *   - rlock: mutex for read.txt
  *   - elock: mutex for empty.txt
  *   - files: each entry is set to whitespace
- *   - log files command.txt, read.txt, empty.txt
+ *   - empties log files command.txt, read.txt, empty.txt
+ *
+ *  argc: amount of command line arguments
+ *  argv: command line arguments
  */
-void init() {
+void init( int argc, char *argv[] ) {
+
+  if( argc == 2 ) {
+    test_mode = strcmp( argv[1], "test" ) ? 0 : 1;
+  }
+
   for( int i = 0; i < N; i++ ) {
     if( pthread_mutex_init( &tlock[i], NULL ) != 0 ) {
       printf( "mutex init has failed\n" );
@@ -156,11 +166,11 @@ void init() {
   cmdfile = fopen( "commands.txt", "w" );
   readfile = fopen( "read.txt", "w" );
   emptyfile = fopen( "empty.txt", "w" );
-  fclose(cmdfile);
+  fclose( cmdfile );
   fclose( readfile );
   fclose( emptyfile );
 
-  printf( "Initialization complete\n" );
+  printf( "Initialization complete. Type \"quit\" to exit the program.\n" );
 }
 
 /* Function: getcmd
@@ -175,10 +185,31 @@ void init() {
 int getcmd( char *buf, int nbuf ) {
   printf( "> " );
   memset( buf, 0, nbuf );
-  if ( fgets( buf, nbuf, stdin ) != NULL ) {
+  if( fgets( buf, nbuf, stdin ) != NULL ) {
     return 0;
   }
   return 1;
+}
+
+/* Function: log_command
+ * ---------------------
+ *  saves user input to command.txt with a timestamp
+ *
+ * cmd: user input
+ */
+void log_command( char *cmd ) {
+  time_t curr_time;
+  char log[150] = { 0 };
+  curr_time = time( NULL );
+
+  // add colon and space after timestamp
+  strcpy( log, ctime( &curr_time ));
+  log[strlen( log ) - 1] = ':';  // turn '\n' to ':'
+  strcat(log, " ");
+
+  cmdfile = fopen( "commands.txt", "a" );
+  fputs(strcat(log, cmd), cmdfile);
+  fclose( cmdfile );
 }
 
 /* Function: strindex
@@ -193,7 +224,7 @@ int getcmd( char *buf, int nbuf ) {
  */
 int strindex( char *str, char arr[][MAXLEN], int narr ) {
   for( int i = 0; i < narr; i++ ) {
-    if ( strcmp( str, arr[i] ) == 0 ) {
+    if( strcmp( str, arr[i] ) == 0 ) {
       return i;
     }
   }
@@ -248,12 +279,12 @@ int init_job( int idx, char *filepath ) {
   else {
     job = malloc( sizeof( tjob ) );
 
-    if ( pthread_mutex_init( &( job->wlock ), NULL ) != 0 ||
-         pthread_mutex_init( &( job->global_lock ), NULL ) != 0 ) {
+    if( pthread_mutex_init( &( job->wlock ), NULL ) != 0 ||
+        pthread_mutex_init( &( job->global_lock ), NULL ) != 0 ) {
       printf( "mutex init has failed\n" );
     }
 
-    if (pthread_cond_init( &( job->done ), NULL ) != 0) {
+    if(pthread_cond_init( &( job->done ), NULL ) != 0) {
       printf( "cond init has failed" );
     }
 
@@ -329,7 +360,7 @@ void finish_job( jobdata *data ) {
   // finish job
   pthread_mutex_lock( &tlock[i] );
   tjob *job = jobs[i];
-  if ( job->workers == 0 ) {
+  if( job->workers == 0 ) {
     free( job );
     jobs[i] = NULL;
     strcpy( files[i], " " );
@@ -351,7 +382,7 @@ void finish_job( jobdata *data ) {
  * ------------------------
  *  adds worker to job's total worker count
  *
- *  job: job which worker is part of
+ * job: job which worker is part of
  */
 void enqueue_worker( tjob *job ) {
   pthread_mutex_lock( &( job->wlock ) );
@@ -375,51 +406,135 @@ void dequeue_worker( tjob *job ) {
  * ----------------
  *  puts thread to sleep for 1 second (80% chance) or 6 seconds (20% chance).
  */
-void xsleep() {
+void xsleep( int worker_ID ) {
+  int s;
+
   srand(time(0));
 	int r = rand()%100;
-  ( r < 80 ) ? sleep(6) : sleep(6);
+  s = ( r < 80 ) ? 6 : 1;
+  sleep(s);
+
+  if( test_mode ) {
+    printf( "thread %d slept for %d seconds.\n", worker_ID, s );
+  }
 }
 
 /* Function: xread
  * ---------------
  *  reads a file (if it exists) and saves its content to read.txt
  *
- *  data: data that is used by the worker
+ * data: data that is used by the worker
  */
 void xread( jobdata *data ) {
   FILE *file;
-  tjob *job = jobs[data->fileidx];
+  char *fname;
 
-  file = fopen( files[data->fileidx], "r" );
-  if ( file == NULL ) {
-    printf( "read %s: FILE DNE\n", files[data->fileidx] );
+  pthread_mutex_lock( &rlock );
+
+  fname = files[data->fileidx];
+  readfile = fopen( "read.txt", "a" );
+  file = fopen( fname, "r" );
+  
+  fprintf( readfile, "read %s: ", fname );
+
+  if( file == NULL ) {
+    fputs( "FILE DNE\n", readfile );
   }
   else {
     char ch;
-    printf( "read %s: ", files[data->fileidx] );
-    while (( ch = fgetc(file) ) != EOF ) {
-      printf( "%c", ch );
+    while(( ch = fgetc( file )) != EOF ) {
+      fputc( ch, readfile );
     }
-      printf( "\n" );
+      fputc( '\n', readfile );
     fclose( file );
+  }
+
+  fclose( readfile );
+  pthread_mutex_unlock( &rlock );
+
+  if( test_mode ) {
+    printf( "read %s complete.\n", fname);
   }
 }
 
+/* Function: xwrite
+ * ----------------
+ *  appends a string to file.
+ *
+ * data: data that is used by the worker
+ */
 void xwrite( jobdata *data ) {
   FILE *file;
-  tjob *job = jobs[data->fileidx];
+  char *fname;
   char *string = data->string;
+  int ms = 25 * strlen( string );
 
-  usleep( ( unsigned int )( 1000 * 25 * strlen( string )));
+  usleep( ( unsigned int )( 1000 * ms ));
 
-  file = fopen( files[data->fileidx], "a" );
-  fputs(string, file);
-  fclose( file );
+  fname = files[data->fileidx];
+  file = fopen( fname, "a" );
+
+  if( file == NULL ) {
+    printf( "Target directory does not exist.\n> " );
+  }
+  else {
+    fputs( string, file );
+    fclose( file );
+  }
+
+  if( test_mode ) {
+    printf( "write %s complete. slept for %d milliseconds.\n", fname, ms);
+  }
 }
 
+/* Function: xempty
+ * ----------------
+ *  empties a file (if it exists/is nonempty) and copies contents to empty.txt.
+ *
+ * data: data that is used by the worker
+ */
 void xempty( jobdata *data ) {
-  printf( "emptying\n" );
+  FILE *file;
+  char *fname;
+  char ch;
+
+  pthread_mutex_lock( &elock );
+
+  fname = files[data->fileidx];
+  emptyfile = fopen( "empty.txt", "a" );
+  file = fopen( fname, "r" );
+
+  fprintf( emptyfile, "empty %s: ", fname );
+
+  if( file == NULL || ( ch = fgetc( file )) == EOF ) {
+    fputs( "FILE ALREADY EMPTY\n", emptyfile );
+    if ( ch == EOF ) { fclose( file ); }
+  }
+  else {
+    // appending to empty.txt
+    do {
+      fputc( ch, emptyfile );
+    } while (( ch = fgetc( file )) != EOF );
+
+    fputc( '\n', emptyfile );
+    fclose( file );
+
+    // emptying file
+    file = fopen( fname, "w" );
+    fclose( file );
+  }
+
+  fclose( emptyfile );
+  pthread_mutex_unlock( &elock );
+
+  // sleep
+  srand(time(0));
+	int r = rand()%4 + 7;
+  sleep(r);
+
+  if( test_mode ) {
+    printf( "empty %s complete. slept for %d seconds.\n", fname, r);
+  }
 }
 
 /* Function: dispatch_worker
@@ -436,11 +551,11 @@ void *dispatch_worker( void *arg ) {
 
   // begin operation
   enqueue_worker( job );
-  xsleep();
+  xsleep( data->worker_ID );
 
   pthread_mutex_lock( &( job->global_lock ) );
   
-  while ( job->curr_job != data->job_ID ) {
+  while( job->curr_job != data->job_ID ) {
     pthread_cond_wait( &( job->done ), &( job->global_lock ) );
   }
 
@@ -464,32 +579,35 @@ void *dispatch_worker( void *arg ) {
   finish_job( data );
 }
 
-int main() {
+int main( int argc, char *argv[] ) {
   char buf[MAXLEN]; // buffer where user input is stored
+  char cpy[MAXLEN]; // copy of user input
   char command[10], filepath[51], string[51];
   char *context;    // used by strtok to save state
   int cmdidx;       // index of command in cmds array
   int fileidx;      // index of file in files/jobs array
   int job_ID;       // position of worker in job queue
   int worker_ID;    // position of worker in thread pool
-  int test_mode = 1;
 
-  init();
+  init( argc, argv );
 
   while( getcmd( buf, sizeof( buf ) ) == 0 ) {
 
+    strcpy( cpy, buf );            // reset string
     buf[strlen( buf ) - 1] = ' ';  // turn '\n' to space
     strcpy( string, " " );         // reset string
 
     strcpy( command, strtok_r( buf, space, &context ));
 
     // check if user wants to quit
-    if ( strcmp( command, "quit" ) == 0 ) { break; }
+    if( strcmp( command, "quit" ) == 0 ) { break; }
 
     // validating command
     if(( cmdidx = strindex( command, cmds, 3 )) == -1 ) {
       printf( "Invalid command.\n" ); continue;
     }
+  
+    log_command( cpy );
 
     // save filepath and/or string
     strcpy( filepath, strtok_r( NULL, space, &context ));
@@ -510,7 +628,7 @@ int main() {
     jobdata *data = init_worker( cmdidx, fileidx, job_ID, worker_ID, string );
 
     // print job and worker status for testing
-    if ( test_mode ) { test_print(); }
+    if( test_mode ) { test_print( fileidx, data ); }
 
     // dispatch worker
     pthread_create( &tid[worker_ID], NULL, dispatch_worker, ( void * )data );
