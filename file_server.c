@@ -572,13 +572,13 @@ int register_worker() {
  *
  * returns: job data for worker
  */
-jobdata *init_worker( int cmdidx, int fileidx, int job_ID, int worker_ID, char *string ) {
+jobdata *init_worker( int cmdidx, int fileidx, int j_ID, int w_ID, char *str ) {
   jobdata *data = malloc( sizeof(jobdata) );
   data->cmdidx = cmdidx;
   data->fileidx = fileidx;
-  data->job_ID = job_ID;
-  data->worker_ID = worker_ID;
-  strcpy( data->string, string );
+  data->job_ID = j_ID;
+  data->worker_ID = w_ID;
+  strcpy( data->string, str );
   return data;
 }
 
