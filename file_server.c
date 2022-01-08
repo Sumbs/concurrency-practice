@@ -60,7 +60,9 @@ int test_mode;
  */
 void pfiles() {
   for ( int i = 0; i < N; i++ ) {
-    printf( "files[%d]: %s\n", i, files[i] );
+    if ( strcmp( files[i], " " ) != 0 ) {
+      printf( "files[%d]: %s\n", i, files[i] );
+    }
   }
 }
 
@@ -122,6 +124,7 @@ void pjob( int idx ) {
  *  calls test functions.
  */
 void test_print( int fileidx, jobdata *data ) {
+      pfiles();
       pft();
       pjob( fileidx );
       pwork( data );
