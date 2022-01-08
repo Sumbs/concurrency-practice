@@ -566,9 +566,9 @@ int register_worker() {
  *
  * cmdidx: index of operation to be performed in cmds array
  * fileidx: index of file to be read in files array
- * job_ID: position of worker in queue
- * worker_ID: position of worker in thread pool
- * string: data to be written, if any
+ * j_ID: position of worker in queue
+ * w_ID: position of worker in thread pool
+ * str: data to be written, if any
  *
  * returns: job data for worker
  */
