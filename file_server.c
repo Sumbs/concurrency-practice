@@ -7,7 +7,7 @@
 #include <pthread.h>
 #define N 500          // max number of files that can be used at a time
 #define M 1000         // max number of threads that can run at a time
-#define MAXLEN 120   // max length of any file server command
+#define MAXLEN 120     // max length of any file server command
 
 /* Struct: Job
  * -----------
@@ -32,15 +32,15 @@ typedef struct Jobdata {
   int fileidx;
   int job_ID;
   int worker_ID;
-  char string[50];
+  char string[51];
 } jobdata;
 
 /* Global Variables
  */
 char files[N][MAXLEN];          // keeps track of currently active jobs
-tjob *jobs[N] = { 0 };            // contains data of jobs
+tjob *jobs[N] = { 0 };          // contains data of jobs
 pthread_t tid[M];               // worker threads
-int threads[M] = { 0 };           // keeps track of currently working threads
+int threads[M] = { 0 };         // keeps track of currently working threads
 FILE *cmdfile;                  // log file for commands
 FILE *readfile;                 // log file for reads
 FILE *emptyfile;                // log file for empty
