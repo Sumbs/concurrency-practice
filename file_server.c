@@ -127,52 +127,6 @@ void test_print( int fileidx, jobdata *data ) {
       pwork( data );
 }
 
-/* Function: init
- * --------------
- *  initializes the following:
- *   - test_mode
- *   - tlock: mutexes for the job array
- *   - qlock: mutex for the thread pool
- *   - rlock: mutex for read.txt
- *   - elock: mutex for empty.txt
- *   - files: each entry is set to whitespace
- *   - empties log files command.txt, read.txt, empty.txt
- *
- *  argc: amount of command line arguments
- *  argv: command line arguments
- */
-void init( int argc, char *argv[] ) {
-
-  if( argc == 2 ) {
-    test_mode = strcmp( argv[1], "test" ) ? 0 : 1;
-  }
-
-  for( int i = 0; i < N; i++ ) {
-    if( pthread_mutex_init( &tlock[i], NULL ) != 0 ) {
-      printf( "mutex init has failed\n" );
-    }
-  }
- 
-  if( pthread_mutex_init( &qlock, NULL ) != 0  ||
-      pthread_mutex_init( &rlock, NULL ) != 0  ||
-      pthread_mutex_init( &elock, NULL ) != 0 ) {
-    printf( "mutex init has failed\n" );
-  }
-
-  for( int i = 0; i < N; i++ ) {
-    strcpy( files[i], " " );
-  }
-
-  cmdfile = fopen( "commands.txt", "w" );
-  readfile = fopen( "read.txt", "w" );
-  emptyfile = fopen( "empty.txt", "w" );
-  fclose( cmdfile );
-  fclose( readfile );
-  fclose( emptyfile );
-
-  printf( "Initialization complete. Type \"quit\" to exit the program.\n" );
-}
-
 /* Function: getcmd
  * ----------------
  *  used to obtain input from the user.
@@ -229,120 +183,6 @@ int strindex( char *str, char arr[][MAXLEN], int narr ) {
     }
   }
   return -1;
-}
-
-/* Function: register_job
- * ----------------------
- *  saves the filepath of a file that will be read from or written to on the
- *  files array by looking for the first "open" spot.
- *
- * filepath: path of file to be saved
- *
- * returns: index of file in array if save is successful, -1 otherwise
- */
-int register_job( char *filepath ) {
-  for( int i = 0; i < N; i++ ) {
-    if( strcmp( files[i], " " ) == 0 ) {
-      strcpy( files[i], filepath );
-      return i;
-    } 
-  }
-  // no available slots
-  printf( "Too many jobs at once. Program will exit after all operations "
-      "are finished.\n" );
-  pthread_exit(NULL);
-}
-
-/* Function: init_job
- * ------------------
- *  checks whether an existing job exists in the job array at the supplied
- *  index. if yes, then the job count is increased. otherwise, the job count is
- *  set to one and the tjob struct is initialized.
- *
- * idx: index of filepath in the files array that job will use
- * filepath: filepath that is redundantly set to the files array to avoid
- *           conflicts in case of consecutive job termination/initiation.
- *
- * returns: job count which functions as ID for corresponding thread
- */
-int init_job( int idx, char *filepath ) {
-  pthread_mutex_lock( &tlock[idx] );
-
-  strcpy( files[idx], filepath );
-  tjob* job = jobs[idx];
-
-  // update job
-  if( job != NULL ) {
-    job->count++;
-  }
-  // create job
-  else {
-    job = malloc( sizeof( tjob ) );
-
-    if( pthread_mutex_init( &( job->wlock ), NULL ) != 0 ||
-        pthread_mutex_init( &( job->global_lock ), NULL ) != 0 ) {
-      printf( "mutex init has failed\n" );
-    }
-
-    if(pthread_cond_init( &( job->done ), NULL ) != 0) {
-      printf( "cond init has failed" );
-    }
-
-    job->workers = 0;
-    job->count = 1;
-    job->curr_job = 1;
-    jobs[idx] = job;
-  }
-
-  pthread_mutex_unlock( &tlock[idx] );
-  return job->count;
-}
-
-/*
- * Function: register_worker
- * -------------------------
- *  saves the index of a worker thread that is dispatched. if there are no
- *  threads available, cleanup is done and program execution is terminated.
- *
- * returns: index of thread in array if save is successful
- */
-int register_worker() {
-  pthread_mutex_lock( &qlock );
-  for( int i = 0; i < M; i++ ) {
-    if( threads[i] == 0 ) {
-      threads[i] = 1;
-      pthread_mutex_unlock( &qlock );
-      return i;
-    } 
-  }
-  pthread_mutex_unlock( &qlock );
-  // no available threads
-  printf( "No more available threads. Program will exit after all "
-      "operations are finished.\n" );
-  pthread_exit(NULL);
-}
-
-/*
- * Function: init_worker
- * ---------------------
- *  prepares the data to be used by the worker for an operation.
- *
- * cmdidx: index of operation to be performed in cmds array
- * fileidx: index of file to be read in files array
- * job_ID: position of worker in queue
- * worker_ID: position of worker in thread pool
- * string: data to be written, if any
- *
- * returns: job data for worker
- */
-jobdata *init_worker( int cmdidx, int fileidx, int job_ID, int worker_ID, char *string ) {
-  jobdata *data = malloc( sizeof(jobdata) );
-  data->cmdidx = cmdidx;
-  data->fileidx = fileidx;
-  data->job_ID = job_ID;
-  data->worker_ID = worker_ID;
-  strcpy( data->string, string );
-  return data;
 }
 
 /* Function: finish_job
@@ -577,6 +417,166 @@ void *dispatch_worker( void *arg ) {
   // end operation
   dequeue_worker( job );
   finish_job( data );
+}
+
+/* Function: init
+ * --------------
+ *  initializes the following:
+ *   - test_mode
+ *   - tlock: mutexes for the job array
+ *   - qlock: mutex for the thread pool
+ *   - rlock: mutex for read.txt
+ *   - elock: mutex for empty.txt
+ *   - files: each entry is set to whitespace
+ *   - empties log files command.txt, read.txt, empty.txt
+ *
+ *  argc: amount of command line arguments
+ *  argv: command line arguments
+ */
+void init( int argc, char *argv[] ) {
+
+  if( argc == 2 ) {
+    test_mode = strcmp( argv[1], "test" ) ? 0 : 1;
+  }
+
+  for( int i = 0; i < N; i++ ) {
+    if( pthread_mutex_init( &tlock[i], NULL ) != 0 ) {
+      printf( "mutex init has failed\n" );
+    }
+  }
+ 
+  if( pthread_mutex_init( &qlock, NULL ) != 0  ||
+      pthread_mutex_init( &rlock, NULL ) != 0  ||
+      pthread_mutex_init( &elock, NULL ) != 0 ) {
+    printf( "mutex init has failed\n" );
+  }
+
+  for( int i = 0; i < N; i++ ) {
+    strcpy( files[i], " " );
+  }
+
+  cmdfile = fopen( "commands.txt", "w" );
+  readfile = fopen( "read.txt", "w" );
+  emptyfile = fopen( "empty.txt", "w" );
+  fclose( cmdfile );
+  fclose( readfile );
+  fclose( emptyfile );
+
+  printf( "Initialization complete. Type \"quit\" to exit the program.\n" );
+}
+
+/* Function: register_job
+ * ----------------------
+ *  saves the filepath of a file that will be read from or written to on the
+ *  files array by looking for the first "open" spot.
+ *
+ * filepath: path of file to be saved
+ *
+ * returns: index of file in array if save is successful, -1 otherwise
+ */
+int register_job( char *filepath ) {
+  for( int i = 0; i < N; i++ ) {
+    if( strcmp( files[i], " " ) == 0 ) {
+      strcpy( files[i], filepath );
+      return i;
+    } 
+  }
+  // no available slots
+  printf( "Too many jobs at once. Program will exit after all operations "
+      "are finished.\n" );
+  pthread_exit(NULL);
+}
+
+/* Function: init_job
+ * ------------------
+ *  checks whether an existing job exists in the job array at the supplied
+ *  index. if yes, then the job count is increased. otherwise, the job count is
+ *  set to one and the tjob struct is initialized.
+ *
+ * idx: index of filepath in the files array that job will use
+ * filepath: filepath that is redundantly set to the files array to avoid
+ *           conflicts in case of consecutive job termination/initiation.
+ *
+ * returns: job count which functions as ID for corresponding thread
+ */
+int init_job( int idx, char *filepath ) {
+  pthread_mutex_lock( &tlock[idx] );
+
+  strcpy( files[idx], filepath );
+  tjob* job = jobs[idx];
+
+  // update job
+  if( job != NULL ) {
+    job->count++;
+  }
+  // create job
+  else {
+    job = malloc( sizeof( tjob ) );
+
+    if( pthread_mutex_init( &( job->wlock ), NULL ) != 0 ||
+        pthread_mutex_init( &( job->global_lock ), NULL ) != 0 ) {
+      printf( "mutex init has failed\n" );
+    }
+
+    if(pthread_cond_init( &( job->done ), NULL ) != 0) {
+      printf( "cond init has failed" );
+    }
+
+    job->workers = 0;
+    job->count = 1;
+    job->curr_job = 1;
+    jobs[idx] = job;
+  }
+
+  pthread_mutex_unlock( &tlock[idx] );
+  return job->count;
+}
+
+/*
+ * Function: register_worker
+ * -------------------------
+ *  saves the index of a worker thread that is dispatched. if there are no
+ *  threads available, cleanup is done and program execution is terminated.
+ *
+ * returns: index of thread in array if save is successful
+ */
+int register_worker() {
+  pthread_mutex_lock( &qlock );
+  for( int i = 0; i < M; i++ ) {
+    if( threads[i] == 0 ) {
+      threads[i] = 1;
+      pthread_mutex_unlock( &qlock );
+      return i;
+    } 
+  }
+  pthread_mutex_unlock( &qlock );
+  // no available threads
+  printf( "No more available threads. Program will exit after all "
+      "operations are finished.\n" );
+  pthread_exit(NULL);
+}
+
+/*
+ * Function: init_worker
+ * ---------------------
+ *  prepares the data to be used by the worker for an operation.
+ *
+ * cmdidx: index of operation to be performed in cmds array
+ * fileidx: index of file to be read in files array
+ * job_ID: position of worker in queue
+ * worker_ID: position of worker in thread pool
+ * string: data to be written, if any
+ *
+ * returns: job data for worker
+ */
+jobdata *init_worker( int cmdidx, int fileidx, int job_ID, int worker_ID, char *string ) {
+  jobdata *data = malloc( sizeof(jobdata) );
+  data->cmdidx = cmdidx;
+  data->fileidx = fileidx;
+  data->job_ID = job_ID;
+  data->worker_ID = worker_ID;
+  strcpy( data->string, string );
+  return data;
 }
 
 int main( int argc, char *argv[] ) {
