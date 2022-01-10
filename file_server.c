@@ -318,7 +318,7 @@ void xwrite( jobdata *data ) {
   file = fopen( fname, "a" );
 
   if( file == NULL ) {
-    printf( "Target directory does not exist.\n> " );
+    printf( "Target directory %s does not exist.\n> ", fname );
   }
   else {
     fputs( string, file );
