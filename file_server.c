@@ -254,7 +254,7 @@ void xsleep( int worker_ID ) {
 
   srand(time(0));
 	int r = rand()%100;
-  s = ( r < 80 ) ? 6 : 1;
+  s = ( r < 80 ) ? 1 : 6;
   sleep(s);
 
   if( test_mode ) {
