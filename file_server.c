@@ -596,7 +596,7 @@ int main( int argc, char *argv[] ) {
 
   while( getcmd( buf, sizeof( buf ) ) == 0 ) {
 
-    strcpy( cpy, buf );            // reset string
+    strcpy( cpy, buf );            // save a copy of user input
     buf[strlen( buf ) - 1] = ' ';  // turn '\n' to space
     strcpy( string, " " );         // reset string
 
